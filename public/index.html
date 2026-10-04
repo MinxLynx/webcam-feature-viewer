@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1116">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Feature Lens">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Feature Lens | ウェブカメラ特徴点ビューアー</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" type="image/svg+xml" href="./icons/icon.svg">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header><div class="brand"><span class="brand-mark">⌖</span><div><h1>Feature Lens</h1><p>ウェブカメラ特徴点ビューアー</p></div></div><span class="local-badge"><i></i> LOCAL PROCESSING</span></header>
+    <main>
+      <section class="viewer-panel" aria-label="リアルタイムプレビュー">
+        <nav class="demo-tabs" aria-label="技術デモ">
+          <button id="tech-points" data-technique="points" aria-pressed="true">特徴点</button>
+          <button id="tech-trails" data-technique="trails" aria-pressed="false">01 追跡軌跡</button>
+          <button id="tech-flow" data-technique="flow" aria-pressed="false">02 移動ベクトル</button>
+          <button id="tech-density" data-technique="density" aria-pressed="false">03 密度マップ</button>
+          <button id="tech-object" data-technique="object" aria-pressed="false">04 画像合成</button>
+        </nav>
+        <div class="demo-intro"><div><h2 id="techTitle">特徴点を観察</h2><p id="techDescription">角や模様など、明るさが複数方向に変化する場所を検出します。</p></div><button id="resetTracking" title="追跡履歴を消して検出し直します">追跡をリセット</button></div>
+        <div class="panel-heading"><span><i id="liveDot" class="dot"></i> LIVE PREVIEW</span><span id="sourceLabel">入力待機中</span></div>
+        <div id="selectionHelp" class="selection-help" hidden><span>指で物体を囲んでください</span><button id="cancelSelection">キャンセル</button></div>
+        <div class="stage" id="stage">
+          <canvas id="preview" width="1280" height="720" aria-label="映像と検出した特徴点"></canvas>
+          <div id="emptyState" class="empty-state"><div class="viewfinder">＋</div><h2>映像の中の、特徴を見つける。</h2><p>カメラを開始すると、角や模様の特徴点を<br>リアルタイムでハイライトします。</p><button id="emptyStart" class="primary">カメラを開始</button><button id="emptyDemo" class="text-button">デモ映像で試す →</button></div>
+          <div id="frameTag" class="frame-tag" hidden>SHI–TOMASI</div>
+        </div>
+        <div class="mobile-actions"><button id="quickStart" class="primary">カメラ開始</button><button id="switchCamera">前面／背面</button><button id="quickStop" disabled>停止</button><button id="quickSelect" hidden disabled>範囲を選択</button></div>
+        <div id="videoControls" class="video-controls" hidden>
+          <button id="playPause">再生</button><input id="videoSeek" type="range" min="0" max="1" step="0.01" value="0" aria-label="動画の再生位置"><output id="videoTime">0:00 / —</output>
+          <label class="inline-toggle"><input id="videoLoop" type="checkbox">ループ</label>
+        </div>
+        <div class="metrics"><div><span>検出した特徴点</span><strong id="pointCount">—</strong><small>POINTS</small></div><div><span>解析フレームレート</span><strong id="fps">—</strong><small>FPS</small></div><div><span>解析の処理時間</span><strong id="latency">—</strong><small>MS</small></div><div><span>入力解像度</span><strong id="resolution" class="resolution">—</strong><small>PIXELS</small></div></div>
+        <div class="analysis-info"><span>実際の解析サイズ <strong id="analysisResolution">—</strong></span><span id="qualityNotice">入力以上には拡大せず解析します</span></div>
+        <div id="demoStats" class="demo-stats">緑の点 = 検出したコーナー</div>
+        <div id="status" class="status" role="status" aria-live="polite">カメラを開始するか、デモ映像をお試しください。</div>
+        <div id="offlinePanel" class="offline-panel" hidden><span id="offlineStatus" role="status">オフライン利用を準備中…</span><button id="applyUpdate" hidden>新しい版に更新</button></div>
+      </section>
+      <aside>
+        <section class="control-card"><div class="card-title"><span>01</span><h2>映像ソース</h2></div>
+          <label for="camera">カメラ</label><select id="camera"><option value="">既定のカメラ</option></select>
+          <label for="facingMode">カメラの向き</label><select id="facingMode"><option value="">自動 / 選択したカメラ</option><option value="environment">背面カメラ</option><option value="user">前面カメラ</option></select>
+          <p id="connectionNotice" class="hint" hidden>iPhoneのカメラにはHTTPS接続が必要です。PCで start-iphone.bat を起動し、接続案内に従ってください。</p>
+          <label for="inputResolution">入力解像度の要求</label><select id="inputResolution"><option value="1280">HD / 1280 × 720</option><option value="1920">フルHD / 1920 × 1080</option><option value="3840">4K / 3840 × 2160</option></select>
+          <p class="hint input-hint">カメラは対応する解像度で取得します。実際の値はプレビュー下に表示します。</p>
+          <div class="button-pair"><button id="start" class="primary">カメラを開始</button><button id="stop" disabled>停止</button></div>
+          <button id="demo" class="wide">デモ映像を再生</button>
+          <label for="demoScene">デモ映像のパターン</label><select id="demoScene"><option value="objects">回転する図形 / 追跡向け</option><option value="translation">画面全体の平行移動 / フロー向け</option><option value="detail">微細な模様 / 高精細・密度向け</option></select>
+          <p class="hint">初回はブラウザーでカメラの使用を許可してください。</p>
+          <div class="file-section"><label for="sourceFile">動画・画像ファイルを入力</label><input id="sourceFile" type="file" accept="image/*,video/*"><p class="hint">PNG / JPEG / WebP、MP4 / WebMなど。ブラウザー対応形式を端末内で読み込みます。動画は一時停止状態で開きます。</p></div>
+        </section>
+        <section id="objectControls" class="control-card" hidden><div class="card-title"><span>AR</span><h2>物体に画像を重ねる</h2></div>
+          <label for="overlayFile">重ねる画像</label><input id="overlayFile" type="file" accept="image/*">
+          <p id="overlayName" class="hint">サンプル画像を使用中（透過PNGにも対応）</p>
+          <div class="button-pair exports"><button id="selectRegion" class="primary" disabled>範囲を選択</button><button id="clearRegion">選択を解除</button></div>
+          <p class="hint">「範囲を選択」で映像を固定し、プレビュー上で物体をドラッグして囲みます。Escでキャンセル。特徴の少ない背景はなるべく除いてください。</p>
+          <div class="range-label"><label for="overlayOpacity">画像の不透明度</label><output id="overlayOpacityValue">70%</output></div><input id="overlayOpacity" type="range" min="0" max="100" value="70">
+          <div class="range-label"><label for="overlayScale">画像の大きさ</label><output id="overlayScaleValue">100%</output></div><input id="overlayScale" type="range" min="25" max="150" value="100">
+          <label for="overlayFit">範囲への合わせ方</label><select id="overlayFit"><option value="contain">縦横比を保つ</option><option value="stretch">範囲いっぱいに表示</option></select>
+          <label class="toggle"><span>追跡枠を表示</span><input id="showTargetBox" type="checkbox" checked></label>
+          <p id="objectStatus" class="hint" role="status">範囲は未選択です。</p>
+          <p class="hint">2点以上の特徴から開始し、追跡中に点を補充します。黄色の破線枠は短時間の推定表示です。見失った対象は自動で再探索します。</p>
+        </section>
+        <section class="control-card"><div class="card-title"><span>02</span><h2>特徴点の検出</h2></div>
+          <label for="algorithm">検出方式</label><select id="algorithm"><option value="shi-tomasi">Shi–Tomasi / コーナー検出</option><option value="harris">Harris / コーナー検出</option></select>
+          <div class="range-label"><label for="maxPoints">最大特徴点数</label><output id="maxPointsValue">250</output></div><input id="maxPoints" type="range" min="25" max="3000" step="25" value="250">
+          <div class="range-label"><label for="sensitivity">感度</label><output id="sensitivityValue">65</output></div><input id="sensitivity" type="range" min="0" max="100" value="65"><p class="hint">感度を上げると、弱い特徴も検出します。</p>
+          <div class="range-label"><label for="minDistance">特徴点の最小間隔</label><output id="minDistanceValue">10 px</output></div><input id="minDistance" type="range" min="3" max="30" value="10">
+          <label for="processingWidth">解析サイズ</label><select id="processingWidth"><option value="320">320 px / 軽量</option><option value="480" selected>480 px / 標準</option><option value="640">640 px / 高精細</option><option value="960">960 px / 精密</option><option value="1280">1280 px / HD解析</option><option value="1920">1920 px / フルHD解析</option></select>
+          <button id="highDetail" class="wide">高精細プリセットを適用</button>
+          <button id="lightweight" class="wide">軽量プリセットを適用</button>
+          <p class="hint">フルHD入力・1920px解析・1500点に設定します。高精細ほど処理負荷が増えます。間隔は解析画像上のピクセル数です。</p>
+        </section>
+        <section class="control-card"><div class="card-title"><span>03</span><h2>表示と保存</h2></div>
+          <label class="toggle"><span>特徴点を表示</span><input id="showPoints" type="checkbox" checked></label>
+          <label class="toggle"><span>左右を反転</span><input id="mirror" type="checkbox" checked></label>
+          <div class="button-pair exports"><button id="saveImage" disabled>画像を保存</button><button id="savePoints" disabled>座標を保存</button></div>
+          <div id="sharePanel" class="share-panel" hidden><p id="shareName"></p><button id="sharePrepared" class="primary">共有して保存</button><button id="downloadPrepared">ダウンロード</button><button id="closeShare">閉じる</button></div>
+          <p class="hint">PNG画像 / JSON座標。座標は反転前の入力映像を基準に保存します。</p>
+        </section>
+      </aside>
+    </main>
+    <footer><span>映像の処理はこの端末内で完結します。外部送信・自動録画は行いません。</span><span>FEATURE LENS / 1.5</span></footer>
+  </div>
+  <video id="video" class="media-source" muted playsinline webkit-playsinline aria-hidden="true" tabindex="-1"></video>
+  <div id="mediaHost" class="media-source" aria-hidden="true"></div>
+</body>
+</html>

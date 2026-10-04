@@ -1,0 +1,15 @@
+{
+  "name": "Feature Lens — 特徴点ビューアー",
+  "short_name": "Feature Lens",
+  "description": "iPhone内でカメラ・写真・動画の特徴点を抽出し、追跡と画像合成を試せます。",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b1116",
+  "theme_color": "#0b1116",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

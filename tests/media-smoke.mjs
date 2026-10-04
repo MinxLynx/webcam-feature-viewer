@@ -1,0 +1,96 @@
+import { writeFile, readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import assert from 'node:assert/strict';
+
+export async function runMediaSmoke({evaluate,send,click,waitFor,until,delay,artifacts,downloads}) {
+  const sourcePath=join(artifacts,'portrait-input.png'),overlayPath=join(artifacts,'overlay.png'),videoPath=join(artifacts,'moving-input.webm');
+  const image=await evaluate(`(()=>{const c=document.createElement('canvas');c.width=480;c.height=720;const x=c.getContext('2d');x.fillStyle='#182f39';x.fillRect(0,0,480,720);for(let y=150;y<570;y+=30)for(let u=60;u<420;u+=30){x.fillStyle=((u/30+y/30)%2)?'#dbe9c6':'#35778c';x.fillRect(u,y,30,30);}return c.toDataURL().split(',')[1];})()`);
+  await writeFile(sourcePath,Buffer.from(image,'base64'));
+  const overlay=await evaluate(`(()=>{const c=document.createElement('canvas');c.width=240;c.height=160;const x=c.getContext('2d');x.fillStyle='#e43759';x.fillRect(0,0,240,160);x.clearRect(80,0,80,45);x.fillStyle='#ffffff';x.font='bold 36px sans-serif';x.fillText('OVERLAY',26,100);return c.toDataURL().split(',')[1];})()`);
+  await writeFile(overlayPath,Buffer.from(overlay,'base64'));
+  async function upload(id,path) {
+    const {root}=await send('DOM.getDocument');const {nodeId}=await send('DOM.querySelector',{nodeId:root.nodeId,selector:`#${id}`});
+    await send('DOM.setFileInputFiles',{nodeId,files:[path]});
+  }
+  async function selectRegion(x0,y0,x1,y1) {
+    await click('selectRegion');
+    const box=await evaluate(`(()=>{const c=document.getElementById('preview'),r=c.getBoundingClientRect(),s=Math.min(r.width/c.width,r.height/c.height);return {left:r.left+(r.width-c.width*s)/2,top:r.top+(r.height-c.height*s)/2,width:c.width*s,height:c.height*s,mirror:document.getElementById('mirror').checked};})()`);
+    const point=(x,y)=>({x:box.left+(box.mirror?1-x:x)*box.width,y:box.top+y*box.height});
+    await send('Input.dispatchMouseEvent',{type:'mousePressed',...point(x0,y0),button:'left',clickCount:1});
+    await send('Input.dispatchMouseEvent',{type:'mouseMoved',...point(x1,y1),button:'left',buttons:1});
+    await send('Input.dispatchMouseEvent',{type:'mouseReleased',...point(x1,y1),button:'left',clickCount:1});
+  }
+  await click('tech-object');await upload('sourceFile',sourcePath);
+  await waitFor("document.getElementById('preview').dataset.source==='image' && document.getElementById('resolution').textContent==='480 × 720'",'portrait image input');
+  assert.equal(await evaluate("document.getElementById('mirror').checked"),false);
+  await upload('overlayFile',overlayPath);
+  await waitFor("document.getElementById('overlayName').textContent==='overlay.png'",'overlay image decoding');
+  await selectRegion(0.13,0.21,0.87,0.79);
+  await waitFor("document.getElementById('preview').dataset.objectStatus==='tracking'",'portrait selection and overlay');
+  const composed=await evaluate("document.getElementById('preview').toDataURL()");
+  await evaluate("document.getElementById('overlayOpacity').value='0';document.getElementById('overlayOpacity').dispatchEvent(new Event('input'))");
+  assert.notEqual(await evaluate("document.getElementById('preview').toDataURL()"),composed);
+  await evaluate("document.getElementById('overlayOpacity').value='70';document.getElementById('overlayOpacity').dispatchEvent(new Event('input'))");
+  assert.equal(await evaluate("document.getElementById('preview').toDataURL()"),composed);
+  await writeFile(join(artifacts,'object-image-overlay.png'),Buffer.from((await send('Page.captureScreenshot',{format:'png'})).data,'base64'));
+  const oldNames=new Set(await readdir(downloads));await click('saveImage');await click('savePoints');
+  const jsonName=await until(async()=>(await readdir(downloads)).find(n=>!oldNames.has(n)&&n.endsWith('.json')),'object JSON');
+  const pngName=await until(async()=>(await readdir(downloads)).find(n=>!oldNames.has(n)&&n.endsWith('.png')),'composite PNG');
+  const saved=JSON.parse(await readFile(join(downloads,jsonName),'utf8'));assert.equal(saved.object.status,'tracking');assert.equal(saved.source,'image');assert(saved.object.inliers>=6);
+  const png=await readFile(join(downloads,pngName));assert.equal(png.readUInt32BE(16),480);assert.equal(png.readUInt32BE(20),720);
+  await click('mirror');await selectRegion(0.13,0.21,0.87,0.79);
+  await waitFor("document.getElementById('preview').dataset.objectStatus==='tracking'",'mirrored portrait selection');
+  await selectRegion(0.13,0.02,0.85,0.16);
+  await waitFor("document.getElementById('preview').dataset.objectStatus==='lost'",'weak region rejects overlay');
+  await click('tech-density');
+  await waitFor("document.getElementById('preview').dataset.technique==='density' && document.getElementById('preview').dataset.source==='image'",'static image reanalysis');
+  console.log('PASS: portrait file, mirrored selection, image overlay controls, PNG/JSON, weak-region rejection');
+
+  const movie=await evaluate(`(async()=>{const c=document.createElement('canvas');c.width=640;c.height=360;const x=c.getContext('2d');let n=0;const draw=()=>{x.fillStyle='#17323b';x.fillRect(0,0,640,360);const dx=12*Math.sin(n++*0.04);for(let y=40;y<320;y+=24)for(let u=100;u<530;u+=24){x.fillStyle=((u/24|0)+(y/24|0))%2?'#dbe9c6':'#35778c';x.fillRect(u+dx,y,24,24);}};draw();const stream=c.captureStream(20),chunks=[],recorder=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp8'});recorder.ondataavailable=e=>chunks.push(e.data);const done=new Promise(r=>recorder.onstop=r);recorder.start();const timer=setInterval(draw,50);await new Promise(r=>setTimeout(r,2200));clearInterval(timer);recorder.stop();await done;stream.getTracks().forEach(t=>t.stop());const bytes=new Uint8Array(await new Blob(chunks,{type:'video/webm'}).arrayBuffer());let raw='';for(const b of bytes)raw+=String.fromCharCode(b);return btoa(raw);})()`);
+  await writeFile(videoPath,Buffer.from(movie,'base64'));
+  await click('tech-object');await upload('sourceFile',videoPath);
+  await waitFor("document.getElementById('preview').dataset.source==='file-video' && document.getElementById('fileVideo')?.paused",'video file paused first frame');
+  await waitFor("!document.getElementById('videoSeek').disabled",'video duration discovery');
+  await selectRegion(0.18,0.15,0.80,0.85);
+  await waitFor("document.getElementById('preview').dataset.objectStatus==='tracking'",'video initial object anchor');
+  await click('playPause');
+  await waitFor("document.getElementById('fileVideo').currentTime>0.6 && document.getElementById('preview').dataset.objectStatus==='tracking'",'video object tracking');
+  await click('playPause');await delay(100);
+  const pauseTime=await evaluate("document.getElementById('fileVideo').currentTime");await delay(120);
+  assert.equal(await evaluate("document.getElementById('fileVideo').currentTime"),pauseTime);
+  await writeFile(join(artifacts,'object-video-overlay.png'),Buffer.from((await send('Page.captureScreenshot',{format:'png'})).data,'base64'));
+  await evaluate("document.getElementById('videoSeek').value='0.2';document.getElementById('videoSeek').dispatchEvent(new Event('input'))");
+  await waitFor("Math.abs(document.getElementById('fileVideo').currentTime-0.2)<0.05 && document.getElementById('preview').dataset.objectStatus==='unselected'",'seek resets stale object');
+  await click('videoLoop');assert.equal(await evaluate("document.getElementById('fileVideo').loop"),true);
+  await evaluate("window.revokedInput=[];window.originalRevoke=URL.revokeObjectURL.bind(URL);URL.revokeObjectURL=url=>{window.revokedInput.push(url);window.originalRevoke(url)};window.videoURL=document.getElementById('fileVideo').src");
+  await upload('sourceFile',sourcePath);
+  await waitFor("document.getElementById('preview').dataset.source==='image'",'video to image switch');
+  assert.equal(await evaluate("window.revokedInput.includes(window.videoURL) && !document.getElementById('fileVideo')"),true);
+  console.log('PASS: local video decode, duration, play/pause, object tracking, seek reset, loop, URL cleanup');
+  const badPath=join(artifacts,'broken.png');await writeFile(badPath,'This is not an image');
+  await upload('sourceFile',badPath);
+  await waitFor("document.getElementById('status').classList.contains('error')",'unsupported image error');
+  await upload('sourceFile',sourcePath);
+  await waitFor("!document.getElementById('status').classList.contains('error') && document.getElementById('preview').dataset.source==='image'",'recovery after decode error');
+  const transparentPath=join(artifacts,'transparent-input.png');
+  const transparent=await evaluate("(()=>{const c=document.createElement('canvas');c.width=480;c.height=720;const x=c.getContext('2d');x.fillStyle='#ffffff';x.fillRect(200,300,50,50);return c.toDataURL().split(',')[1];})()");
+  await writeFile(transparentPath,Buffer.from(transparent,'base64'));await upload('sourceFile',transparentPath);
+  await waitFor("document.getElementById('sourceLabel').textContent==='transparent-input.png' && document.getElementById('preview').getContext('2d').getImageData(0,0,1,1).data[3]===0",'transparent input clears previous imagery');
+  console.log('PASS: decode-error recovery and transparent sources without stale pixels');
+  const rapidPath=join(artifacts,'rapid-occlusion.webm');
+  const rapid=await evaluate(`(async()=>{const c=document.createElement('canvas');c.width=640;c.height=360;const x=c.getContext('2d');let tick=0;const draw=()=>{x.fillStyle='#181818';x.fillRect(0,0,640,360);const t=tick++/20;if(t>=2.1&&t<2.6)return;const ox=t<1.1?80:t<2.6?220:360,oy=t<1.1?100:t<2.6?130:85;for(let y=0;y<108;y+=12)for(let u=0;u<144;u+=12){const seed=((u/12)*7919+(y/12)*104729+(u/12)*(y/12)*3571)%211;const value=40+seed;x.fillStyle='rgb('+value+','+value+','+value+')';x.fillRect(ox+u,oy+y,12,12);}};draw();const stream=c.captureStream(20),chunks=[],recorder=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp8'});recorder.ondataavailable=e=>chunks.push(e.data);const done=new Promise(r=>recorder.onstop=r);recorder.start();const timer=setInterval(draw,50);await new Promise(r=>setTimeout(r,4000));clearInterval(timer);recorder.stop();await done;stream.getTracks().forEach(t=>t.stop());const bytes=new Uint8Array(await new Blob(chunks).arrayBuffer());let raw='';for(const b of bytes)raw+=String.fromCharCode(b);return btoa(raw);})()`);
+  await writeFile(rapidPath,Buffer.from(rapid,'base64'));await upload('sourceFile',rapidPath);
+  await waitFor("document.getElementById('sourceLabel').textContent==='rapid-occlusion.webm' && document.getElementById('preview').dataset.source==='file-video'",'rapid movement video');
+  if(await evaluate("document.getElementById('videoLoop').checked"))await click('videoLoop');
+  await selectRegion(80/640,100/360,224/640,208/360);
+  await waitFor("document.getElementById('preview').dataset.objectStatus==='tracking'",'rapid video anchor');
+  await click('playPause');
+  await waitFor("document.getElementById('fileVideo').currentTime>1.35 && document.getElementById('fileVideo').currentTime<2.1 && document.getElementById('preview').dataset.objectStatus==='tracking'",'large jump recovery in video');
+  await waitFor("document.getElementById('preview').dataset.objectStatus==='coasting'",'visible prediction during short occlusion');
+  await writeFile(join(artifacts,'overlay-prediction.png'),Buffer.from((await send('Page.captureScreenshot',{format:'png'})).data,'base64'));
+  await waitFor("document.getElementById('fileVideo').currentTime>2.9 && document.getElementById('preview').dataset.objectStatus==='tracking'",'automatic reacquisition in video');
+  await click('playPause');
+  await writeFile(join(artifacts,'overlay-recovered.png'),Buffer.from((await send('Page.captureScreenshot',{format:'png'})).data,'base64'));
+  console.log('PASS: video with 140px jumps, temporary occlusion, prediction, and automatic reacquisition');
+  await click('stop');await click('demo');
+}
