@@ -49,7 +49,7 @@ export async function runMediaSmoke({evaluate,send,click,waitFor,until,delay,art
   const movie=await evaluate(`(async()=>{const c=document.createElement('canvas');c.width=640;c.height=360;const x=c.getContext('2d');let n=0;const draw=()=>{x.fillStyle='#17323b';x.fillRect(0,0,640,360);const dx=12*Math.sin(n++*0.04);for(let y=40;y<320;y+=24)for(let u=100;u<530;u+=24){x.fillStyle=((u/24|0)+(y/24|0))%2?'#dbe9c6':'#35778c';x.fillRect(u+dx,y,24,24);}};draw();const stream=c.captureStream(20),chunks=[],recorder=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp8'});recorder.ondataavailable=e=>chunks.push(e.data);const done=new Promise(r=>recorder.onstop=r);recorder.start();const timer=setInterval(draw,50);await new Promise(r=>setTimeout(r,2200));clearInterval(timer);recorder.stop();await done;stream.getTracks().forEach(t=>t.stop());const bytes=new Uint8Array(await new Blob(chunks,{type:'video/webm'}).arrayBuffer());let raw='';for(const b of bytes)raw+=String.fromCharCode(b);return btoa(raw);})()`);
   await writeFile(videoPath,Buffer.from(movie,'base64'));
   await click('tech-object');await upload('sourceFile',videoPath);
-  await waitFor("document.getElementById('preview').dataset.source==='file-video' && document.getElementById('fileVideo')?.paused",'video file paused first frame');
+  await waitFor("document.getElementById('preview').dataset.source==='file-video' && document.getElementById('fileVideo')?.paused && Number(document.getElementById('preview').dataset.detectedCount)>0",'video file paused first frame');
   await waitFor("!document.getElementById('videoSeek').disabled",'video duration discovery');
   await selectRegion(0.18,0.15,0.80,0.85);
   await waitFor("document.getElementById('preview').dataset.objectStatus==='tracking'",'video initial object anchor');
@@ -80,7 +80,7 @@ export async function runMediaSmoke({evaluate,send,click,waitFor,until,delay,art
   const rapidPath=join(artifacts,'rapid-occlusion.webm');
   const rapid=await evaluate(`(async()=>{const c=document.createElement('canvas');c.width=640;c.height=360;const x=c.getContext('2d');let tick=0;const draw=()=>{x.fillStyle='#181818';x.fillRect(0,0,640,360);const t=tick++/20;if(t>=2.1&&t<2.6)return;const ox=t<1.1?80:t<2.6?220:360,oy=t<1.1?100:t<2.6?130:85;for(let y=0;y<108;y+=12)for(let u=0;u<144;u+=12){const seed=((u/12)*7919+(y/12)*104729+(u/12)*(y/12)*3571)%211;const value=40+seed;x.fillStyle='rgb('+value+','+value+','+value+')';x.fillRect(ox+u,oy+y,12,12);}};draw();const stream=c.captureStream(20),chunks=[],recorder=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp8'});recorder.ondataavailable=e=>chunks.push(e.data);const done=new Promise(r=>recorder.onstop=r);recorder.start();const timer=setInterval(draw,50);await new Promise(r=>setTimeout(r,4000));clearInterval(timer);recorder.stop();await done;stream.getTracks().forEach(t=>t.stop());const bytes=new Uint8Array(await new Blob(chunks).arrayBuffer());let raw='';for(const b of bytes)raw+=String.fromCharCode(b);return btoa(raw);})()`);
   await writeFile(rapidPath,Buffer.from(rapid,'base64'));await upload('sourceFile',rapidPath);
-  await waitFor("document.getElementById('sourceLabel').textContent==='rapid-occlusion.webm' && document.getElementById('preview').dataset.source==='file-video'",'rapid movement video');
+  await waitFor("document.getElementById('preview').dataset.inputName==='rapid-occlusion.webm' && document.getElementById('preview').dataset.source==='file-video' && Number(document.getElementById('preview').dataset.detectedCount)>0",'rapid movement video');
   if(await evaluate("document.getElementById('videoLoop').checked"))await click('videoLoop');
   await selectRegion(80/640,100/360,224/640,208/360);
   await waitFor("document.getElementById('preview').dataset.objectStatus==='tracking'",'rapid video anchor');
@@ -105,8 +105,8 @@ export async function runMediaSmoke({evaluate,send,click,waitFor,until,delay,art
   })()`);
   if(mp4){
     const path=join(artifacts,'iphone-compatible.mp4');await writeFile(path,Buffer.from(mp4,'base64'));
-    await click('tech-points');await upload('sourceFile',path);
-    await waitFor("document.getElementById('sourceLabel').textContent==='iphone-compatible.mp4' && document.getElementById('preview').dataset.source==='file-video' && document.getElementById('fileVideo').paused",'H.264 MP4 paused frame');
+    await click('tech-points');await upload('originalFile',path);
+    await waitFor("document.getElementById('preview').dataset.inputName==='iphone-compatible.mp4' && document.getElementById('preview').dataset.source==='file-video' && document.getElementById('fileVideo').paused && Number(document.getElementById('preview').dataset.detectedCount)>0",'H.264 MP4 paused frame from saved file');
     assert(Number(await evaluate("document.getElementById('pointCount').textContent"))>0);
     await click('playPause');await waitFor("document.getElementById('fileVideo').currentTime>0.3",'H.264 MP4 playback');
     console.log('PASS: real H.264 MP4 file decode, paused first frame, feature extraction and playback');

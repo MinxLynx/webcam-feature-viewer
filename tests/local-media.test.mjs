@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mediaType,mediaBlob,mediaError,openLocalMedia} from '../public/local-media.js';
+import {mediaType,mediaBlob,mediaError,openLocalMedia,resolveDuration} from '../public/local-media.js';
 
 test('iPhone files are identified even with missing or generic MIME metadata',()=>{
   for(const [name,mime,type] of [
@@ -22,6 +22,8 @@ test('iPhone MIME normalization preserves file contents',async()=>{
   assert.deepEqual(await mediaBlob(file).arrayBuffer(),await file.arrayBuffer());
   const jpeg=new File(['jpeg'],'photo.jpg',{type:'image/jpeg'});
   assert.equal(mediaBlob(jpeg),jpeg);
+  const converted=new File(['jpeg bytes'],'photo.heic',{type:'image/jpeg'});
+  assert.equal(mediaBlob(converted),converted,'preserve a photo already converted by the picker');
   assert.match(mediaError(new File([''],'photo.heic')),/iOS 17/);
   assert.match(mediaError(file),/H.264・HEVC/);
 });
@@ -57,6 +59,13 @@ test('Safari video waits for a decoded frame even when loadeddata is omitted',as
   video.readyState=2; // Safari may supply the frame without a loadeddata event.
   await ready;assert.equal(video.paused,true);assert.equal(video.currentTime,0);
   assert.equal(video.muted,true);assert.equal(video.playsInline,true);
+  assert.equal(video.preload,'metadata');
+});
+test('unknown duration does not trigger an expensive seek to the end of a movie',async()=>{
+  for(const duration of [NaN,0,12]){
+    const media={duration,set currentTime(value){assert.fail('unnecessary seek');}};
+    await resolveDuration(media);
+  }
 });
 
 test('a video error is reported and replacement cancels a pending load',async t=>{

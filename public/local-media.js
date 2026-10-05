@@ -1,5 +1,5 @@
 export async function resolveDuration(media) {
-  if(Number.isFinite(media.duration))return;
+  if(media.duration!==Infinity)return;
   const seek=time=>new Promise(resolve=>{
     let timer;
     const done=()=>{clearTimeout(timer);media.removeEventListener('seeked',done);media.removeEventListener('emptied',done);resolve();};
@@ -17,8 +17,8 @@ const formats = {
 };
 export function mediaType(file) {
   // Files selected from iCloud Drive can have an empty or generic MIME type.
-  // Prefer the known extension, without converting or uploading the file.
-  const mime=formats[file.name?.split('.').pop().toLowerCase()] || file.type || '';
+  // Preserve a specific MIME type if the photo picker already converted it.
+  const mime=/^(image|video)\//.test(file.type||'') ? file.type : formats[file.name?.split('.').pop().toLowerCase()] || file.type || '';
   return {mime,type:mime.startsWith('image/')?'image':mime.startsWith('video/')?'file-video':null};
 }
 export function mediaBlob(file) {
@@ -35,7 +35,7 @@ export function openLocalMedia(file,host) {
   if(!type)throw new Error('画像または動画ファイルを選んでください。');
   const url=URL.createObjectURL(mediaBlob(file)),element=type==='image'?new Image():document.createElement('video');
   element.id=type==='image'?'inputImage':'fileVideo';
-  if(type==='file-video'){element.muted=true;element.defaultMuted=true;element.playsInline=true;element.setAttribute('playsinline','');element.setAttribute('webkit-playsinline','');element.preload='auto';}
+  if(type==='file-video'){element.muted=true;element.defaultMuted=true;element.playsInline=true;element.setAttribute('playsinline','');element.setAttribute('webkit-playsinline','');element.preload='metadata';}
   host.replaceChildren(element);
   let cleanup=()=>{},rejectLoad,disposed=false;
   const ready=new Promise((resolve,reject)=>{

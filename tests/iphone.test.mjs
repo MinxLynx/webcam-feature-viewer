@@ -5,7 +5,7 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { X509Certificate } from 'node:crypto';
-import { previewSize, cameraConstraints } from '../public/media-platform.js';
+import { previewSize, cameraConstraints, FramePacer } from '../public/media-platform.js';
 import { lanAddresses, startIPhone, certificates } from '../iphone-server.mjs';
 
 test('large portrait and landscape iPhone inputs preserve aspect and fit the canvas budget',()=>{
@@ -19,6 +19,19 @@ test('front/back selection overrides a stale camera device ID',()=>{
   assert.equal(cameraConstraints('old-back-id','user',1280).video.deviceId,undefined);
   assert.deepEqual(cameraConstraints('usb','',1920).video.deviceId,{exact:'usb'});
   assert.equal(cameraConstraints('','environment',1280).audio,false);
+});
+test('frame pacing preserves 30/60 fps on a display with timing jitter',()=>{
+  for(const rate of [30,60]){
+    const pacer=new FramePacer();let count=0;
+    for(let i=0;i<600;i++)if(pacer.ready(i*1000/60+(i%3-1)*0.2,rate))count++;
+    assert(Math.abs(count-rate*10)<=1,`${rate} fps: ${count} frames in 10 seconds`);
+  }
+  const pacer=new FramePacer();assert(pacer.ready(100,60));
+  assert(!pacer.ready(105,60));assert(pacer.ready(3000,60));
+  assert(!pacer.ready(3001,60),'no burst to catch up after a long pause');
+  pacer.reset();assert(pacer.ready(3001,30));
+  assert.deepEqual(cameraConstraints('','environment',1280).video.frameRate,{ideal:60,max:60});
+  assert.deepEqual(cameraConstraints('','environment',1280,30).video.frameRate,{ideal:30,max:30});
 });
 test('LAN discovery excludes public and loopback addresses',()=>{
   const item=address=>({address,family:'IPv4',internal:false});

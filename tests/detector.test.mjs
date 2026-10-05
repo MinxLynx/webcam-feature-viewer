@@ -35,3 +35,15 @@ test('detector handles image size changes without stale results',()=>{
   detector.detect(image(100,80,(x,y)=>x>30&&y>30?255:0),100,80);
   assert.deepEqual(detector.detect(image(60,50,()=>90),60,50),[]);
 });
+test('local feature selection reuses the tensor without changing point coordinates',()=>{
+  const data=image(160,120,(x,y)=>((x/12|0)+(y/12|0))%2?230:20);
+  const shared=new CornerDetector(),separate=new CornerDetector();
+  for(const algorithm of ['shi-tomasi','harris']){
+    const options={algorithm,maxPoints:400,minDistance:4,quality:0.003,region:{x:30,y:20,width:50,height:60}};
+    shared.detect(data,160,120);
+    const gray=shared.gray;
+    assert.deepEqual(shared.select(options),separate.detect(data,160,120,options));
+    assert.equal(shared.gray,gray,'local selection does not allocate or recompute grayscale');
+    assert.deepEqual(shared.select({algorithm}),separate.detect(data,160,120,{algorithm}));
+  }
+});

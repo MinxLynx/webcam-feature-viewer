@@ -41,7 +41,7 @@ try {
   function send(method,params={}){return new Promise((resolve,reject)=>{const id=++nextId;const timer=setTimeout(()=>{requests.delete(id);reject(new Error(`CDP timeout: ${method}`));},15000);requests.set(id,{resolve,reject,timer});ws.send(JSON.stringify({id,method,params}));});}
   async function evaluate(expression){const data=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(data.exceptionDetails)throw new Error(data.exceptionDetails.exception?.description||data.exceptionDetails.text);return data.result.value;}
   const click=id=>evaluate(`document.getElementById(${JSON.stringify(id)}).click()`);
-  const waitFor=async(expression,label)=>{try{return await until(()=>evaluate(expression),label);}catch(error){console.error('Browser diagnostics:',errors,await evaluate("document.getElementById('status')?.textContent"));throw error;}};
+  const waitFor=async(expression,label)=>{try{return await until(()=>evaluate(expression),label);}catch(error){console.error('Browser diagnostics:',errors,await evaluate("({status:document.getElementById('status')?.textContent,object:document.getElementById('objectStatus')?.textContent,preview:{...document.getElementById('preview')?.dataset},video:document.getElementById('fileVideo')?{ready:document.getElementById('fileVideo').readyState,seeking:document.getElementById('fileVideo').seeking,time:document.getElementById('fileVideo').currentTime,paused:document.getElementById('fileVideo').paused}:null})"));throw error;}};
   await send('Page.enable');await send('Runtime.enable');await send('Log.enable');
   await send('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:downloads});
   await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1100,deviceScaleFactor:1,mobile:false});
@@ -52,6 +52,21 @@ try {
   await waitFor("Number(document.getElementById('fps').textContent)>0",'FPS metric');
   await writeFile(join(artifacts,'desktop-demo.png'),Buffer.from((await send('Page.captureScreenshot',{format:'png'})).data,'base64'));
   console.log('PASS: demo renders detected points and live metrics');
+  const rates={};
+  for(const rate of [60,30]){
+    await evaluate(`document.getElementById('targetFps').value='${rate}';document.getElementById('targetFps').dispatchEvent(new Event('change'))`);
+    rates[rate]=await evaluate("new Promise(resolve=>{const start=performance.now();let frames=0;const observer=new MutationObserver(records=>{frames+=records.length;});observer.observe(document.getElementById('preview'),{attributes:true,attributeFilter:['data-detected-count']});setTimeout(()=>{observer.disconnect();resolve(Number((frames*1000/(performance.now()-start)).toFixed(1)));},1800);})");
+    assert(rates[rate]>0 && rates[rate]<rate*1.2,`frame cap ${rate}: ${rates[rate]}`);
+  }
+  await writeFile(join(artifacts,'frame-rates.json'),JSON.stringify(rates,null,2));
+  console.log('MEASURE: completed demo frames/sec at 60/30 caps:',rates);
+  await evaluate("document.getElementById('targetFps').value='60';document.getElementById('targetFps').dispatchEvent(new Event('change'))");
+  await evaluate("document.getElementById('originalFile').dispatchEvent(new Event('click'))");
+  await delay(150);
+  assert.equal(await evaluate("new Promise(resolve=>{let frames=0;const observer=new MutationObserver(records=>{frames+=records.length;});observer.observe(document.getElementById('preview'),{attributes:true,attributeFilter:['data-detected-count']});setTimeout(()=>{observer.disconnect();resolve(frames);},250);})"),0);
+  await evaluate("document.getElementById('originalFile').dispatchEvent(new Event('cancel'))");
+  await waitFor("new Promise(resolve=>{const observer=new MutationObserver(()=>{observer.disconnect();resolve(true)});observer.observe(document.getElementById('preview'),{attributes:true,attributeFilter:['data-detected-count']});setTimeout(()=>{observer.disconnect();resolve(false)},200);})",'picker cancellation resumes analysis');
+  console.log('PASS: file picker suspends processing and cancellation resumes it');
   await evaluate("document.getElementById('algorithm').value='harris';document.getElementById('maxPoints').value='25';document.getElementById('maxPoints').dispatchEvent(new Event('input'))");
   await waitFor("document.getElementById('frameTag').textContent==='HARRIS' && Number(document.getElementById('pointCount').textContent)<=25",'settings update');
   console.log('PASS: Harris and maximum point count update live');
@@ -112,6 +127,7 @@ try {
   await evaluate("window.nativeGetUserMedia=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=constraints=>{window.requestedCamera=constraints;return window.nativeGetUserMedia(constraints)}");
   await click('start');
   await waitFor("document.getElementById('preview').dataset.source==='camera' && Number(document.getElementById('pointCount').textContent)>0 && document.getElementById('video').srcObject?.active",'synthetic camera');
+  assert.equal(await evaluate("window.requestedCamera.video.frameRate.ideal"),60);
   await evaluate("window.testTrack=document.getElementById('video').srcObject.getVideoTracks()[0]");
   await click('tech-flow');
   await waitFor("document.getElementById('preview').dataset.source==='camera' && document.getElementById('preview').dataset.technique==='flow'",'camera technique switch');
@@ -121,11 +137,15 @@ try {
   assert.equal(await evaluate("window.testTrack.readyState"),'ended');
   await evaluate("window.testTrack=document.getElementById('video').srcObject.getVideoTracks()[0]");
   console.log('PASS: technique switch keeps the live camera; full-HD requests restart it');
+  await evaluate("document.getElementById('targetFps').value='30';document.getElementById('targetFps').dispatchEvent(new Event('change'))");
+  await waitFor("window.requestedCamera.video.frameRate.ideal===30 && document.getElementById('video').srcObject?.active",'camera 30 fps choice');
+  assert.equal(await evaluate("window.testTrack.readyState"),'ended');
+  await evaluate("window.testTrack=document.getElementById('video').srcObject.getVideoTracks()[0]");
   await click('stop');
   assert.equal(await evaluate("window.testTrack.readyState"),'ended');
   assert.equal(await evaluate("document.getElementById('video').srcObject"),null);
   console.log('PASS: camera preview starts and Stop releases the track');
-  await evaluate("document.getElementById('inputResolution').value='1280';document.getElementById('processingWidth').value='480';document.getElementById('maxPoints').value='250';document.getElementById('maxPoints').dispatchEvent(new Event('input'))");
+  await evaluate("document.getElementById('targetFps').value='60';document.getElementById('inputResolution').value='1280';document.getElementById('processingWidth').value='480';document.getElementById('maxPoints').value='250';document.getElementById('maxPoints').dispatchEvent(new Event('input'))");
   await evaluate("window.realGetUserMedia=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=()=>Promise.reject(new DOMException('Test denial','NotAllowedError'))");
   await click('start');
   await waitFor("document.getElementById('status').classList.contains('error') && document.getElementById('status').textContent.includes('許可')",'permission error');

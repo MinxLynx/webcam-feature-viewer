@@ -2,6 +2,10 @@
 // Integral images keep the tensor calculation linear in the image size.
 export class CornerDetector {
   detect(rgba, width, height, { algorithm = 'shi-tomasi', maxPoints = 250, quality = 0.01, minDistance = 10, region = null } = {}) {
+    this.prepare(rgba,width,height);
+    return this.select({algorithm,maxPoints,quality,minDistance,region});
+  }
+  prepare(rgba,width,height) {
     if (rgba.length !== width * height * 4 || width < 9 || height < 9) throw new Error('Invalid image size');
     const n = width * height;
     const stride = width + 1;
@@ -14,9 +18,9 @@ export class CornerDetector {
       this.xy = new Float64Array(integralSize);
       this.scores = new Float32Array(n);
     }
-    const { gray, xx, yy, xy, scores } = this;
+    const { gray, xx, yy, xy } = this;
     for (let i = 0; i < n; i++) gray[i] = (rgba[i*4]*0.299 + rgba[i*4+1]*0.587 + rgba[i*4+2]*0.114) / 255;
-    xx.fill(0); yy.fill(0); xy.fill(0); scores.fill(0);
+    xx.fill(0); yy.fill(0); xy.fill(0);
     for (let y = 1; y < height - 1; y++) {
       let sx = 0, sy = 0, sxy = 0;
       for (let x = 1; x < width - 1; x++) {
@@ -28,6 +32,12 @@ export class CornerDetector {
         xx[j] = xx[j-stride] + sx; yy[j] = yy[j-stride] + sy; xy[j] = xy[j-stride] + sxy;
       }
     }
+    return this;
+  }
+  // The same grayscale and tensor can serve global and local feature searches.
+  select({ algorithm = 'shi-tomasi', maxPoints = 250, quality = 0.01, minDistance = 10, region = null } = {}) {
+    const {width,height,xx,yy,xy,scores}=this,stride=width+1;
+    scores.fill(0);
     let maxScore = 0;
     const left=Math.max(3,Math.floor(region?.x??3)),top=Math.max(3,Math.floor(region?.y??3));
     const right=Math.min(width-3,Math.ceil(region?region.x+region.width:width-3)),bottom=Math.min(height-3,Math.ceil(region?region.y+region.height:height-3));
@@ -36,7 +46,8 @@ export class CornerDetector {
         const a = (y-2)*stride+x-2, b = a+5, c = a+5*stride, d = c+5;
         const sxx = xx[d]-xx[b]-xx[c]+xx[a], syy = yy[d]-yy[b]-yy[c]+yy[a], sxy = xy[d]-xy[b]-xy[c]+xy[a];
         const trace = sxx+syy;
-        const score = algorithm === 'harris' ? sxx*syy-sxy*sxy-0.04*trace*trace : (trace-Math.hypot(sxx-syy,2*sxy))/2;
+        const difference=sxx-syy;
+        const score = algorithm === 'harris' ? sxx*syy-sxy*sxy-0.04*trace*trace : (trace-Math.sqrt(difference*difference+4*sxy*sxy))/2;
         scores[y*width+x] = score;
         maxScore = Math.max(maxScore, score);
       }

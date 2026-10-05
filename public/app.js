@@ -1,19 +1,42 @@
 import { techniques, renderOverlay, demoStats, drawDemoScene } from './demo-view.js';
 import { openLocalMedia, resolveDuration, mediaBlob, mediaError } from './local-media.js';
 import { previewPoint } from './object-tracker.js';
-import { appleMobile, previewSize, cameraConstraints } from './media-platform.js';
+import { appleMobile, previewSize, cameraConstraints, FramePacer } from './media-platform.js';
 import { startOfflineSupport } from './pwa.js';
 const $ = id => document.getElementById(id);
 const video = $('video'), preview = $('preview'), ctx = preview.getContext('2d');
-const capture = document.createElement('canvas'), captureCtx = capture.getContext('2d');
+let capture = document.createElement('canvas'), captureCtx = capture.getContext('2d');
 const analysis = document.createElement('canvas'), analysisCtx = analysis.getContext('2d', { willReadFrequently: true });
 let stream = null, mode = 'idle', generation = 0, sequence = 0, pending = null, worker = null;
-let animation = 0, lastRequest = 0, fps = 0, frame = null;
+let animation = 0, fps = 0, frame = null;
 let technique = 'points', epoch = 0, resultTimes = [];
 let localInput=null,dirty=true,lastMediaTime=-1,demoTime=0,lastTick=0;
 let selection=null,selectionId=0,selecting=false,drag=null,seedNext=false,resumeAfterSeed=false;
 let overlayLoadId=0;
 let preparedFile=null;
+const pacer=new FramePacer();
+let frameMedia=null,videoCallback=null,sourceFrame=0,lastSourceFrame=-1,lastVideoUI=0,lastMetrics=0;
+let filePickerOpen=false,pickerVideo=null,resumePickerVideo=false;
+function closeFilePicker(resume=true){
+  filePickerOpen=false;
+  if(resume&&resumePickerVideo&&pickerVideo===localInput?.element)pickerVideo.play().catch(()=>status('再生ボタンで動画を再開してください。'));
+  pickerVideo=null;resumePickerVideo=false;
+}
+for(const id of ['sourceFile','originalFile','overlayFile']){
+  $(id).addEventListener('click',()=>{
+    filePickerOpen=true;pickerVideo=mode==='file-video'?localInput?.element:null;
+    resumePickerVideo=!!pickerVideo&&!pickerVideo.paused;
+    if(resumePickerVideo)pickerVideo.pause();
+  });
+  $(id).addEventListener('cancel',()=>closeFilePicker());
+}
+window.addEventListener('focus',()=>{if(filePickerOpen)closeFilePicker();});
+function watchFrames(media){
+  frameMedia=media;sourceFrame=0;lastSourceFrame=-1;
+  if(!media.requestVideoFrameCallback)return;
+  const next=()=>{if(frameMedia!==media)return;sourceFrame++;videoCallback=media.requestVideoFrameCallback(next);};
+  videoCallback=media.requestVideoFrameCallback(next);
+}
 const defaultOverlay=document.createElement('canvas');defaultOverlay.width=360;defaultOverlay.height=220;
 const badge=defaultOverlay.getContext('2d');badge.fillStyle='#102d42';badge.fillRect(0,0,360,220);badge.strokeStyle='#74f7d5';badge.lineWidth=9;badge.strokeRect(6,6,348,208);badge.fillStyle='#74f7d5';badge.font='bold 38px sans-serif';badge.textAlign='center';badge.fillText('FEATURE LENS',180,103);badge.font='24px sans-serif';badge.fillText('TRACKED',180,153);
 let overlayImage=defaultOverlay;
@@ -51,10 +74,13 @@ function stop(silent = false) {
   selecting=false;drag=null;selection=null;seedNext=false;resumeAfterSeed=false;
   preview.classList.remove('selecting');
   cancelAnimationFrame(animation);
+  closeFilePicker(false);
+  if(videoCallback!==null)frameMedia?.cancelVideoFrameCallback?.(videoCallback);
+  videoCallback=null;frameMedia=null;pacer.reset();lastVideoUI=0;lastMetrics=0;
   if (stream) stream.getTracks().forEach(track => track.stop());
   stream = null; video.pause(); video.srcObject = null;
   localInput?.dispose();localInput=null;lastMediaTime=-1;lastTick=0;dirty=true;
-  mode = 'idle'; pending = null; lastRequest = 0; fps = 0; resultTimes = [];
+  mode = 'idle'; pending = null; fps = 0; resultTimes = [];
   $('fps').textContent = '—';
   $('sourceLabel').textContent = frame ? '停止中 / 最後のフレーム' : '入力待機中';
   updateButtons();
@@ -71,10 +97,16 @@ function ensureWorker() {
     const now = performance.now();
     resultTimes.push(now);while(resultTimes.length>2 && resultTimes[0]<now-1500)resultTimes.shift();
     fps=resultTimes.length>=4?1000*(resultTimes.length-1)/(now-resultTimes[0]):0;
+    const firstFrame=!frame||frame.generation!==job.generation;
     frame = { ...job, points: data.points, tracks: data.tracks, motion: data.motion, density: data.density, object:data.object, duration: data.duration };
     preview.dataset.source=job.source;preview.dataset.technique=job.technique;
+    preview.dataset.inputName=job.inputName||'';
     preview.dataset.trackCount=data.tracks.length;preview.dataset.detectedCount=data.points.length;
     commitFrame();
+    // Render every completed frame, but avoid rebuilding the control panel 60
+    // times per second. Metrics are sampled from all results, not just UI ticks.
+    if(firstFrame||job.seed||mode==='image'||(mode==='file-video'&&localInput?.element.paused)||now-lastMetrics>=150){
+    lastMetrics=now;
     $('pointCount').textContent = data.points.length;
     $('fps').textContent = mode==='image'||(mode==='file-video'&&localInput?.element.paused)?'—':fps ? fps.toFixed(1) : '—';
     $('latency').textContent = data.duration.toFixed(1);
@@ -83,11 +115,12 @@ function ensureWorker() {
     $('qualityNotice').textContent = job.width < Number($('processingWidth').value) ? '入力解像度が上限です（拡大なし）' : '入力以上には拡大せず解析しています';
     if(job.originalWidth!==job.sourceWidth||job.originalHeight!==job.sourceHeight)$('qualityNotice').textContent=`表示・保存は ${job.sourceWidth} × ${job.sourceHeight} に縮小（iPhone / iPad）`;
     $('demoStats').textContent = demoStats(frame);
+    }
     $('objectStatus').textContent=data.object?.status==='tracking'?`${data.object.method==='appearance'?'画像照合で再捕捉':'追跡中'}：対応${data.object.inliers}点・補充${data.object.replenished||0}点。`:data.object?.reason||'「範囲を選択」で物体を囲んでください。';
     preview.dataset.objectStatus=data.object?.status||'unselected';
     $('emptyState').hidden = true; $('frameTag').hidden = false;
     $('frameTag').textContent = job.options.algorithm === 'harris' ? 'HARRIS' : 'SHI–TOMASI';
-    updateButtons();
+    if(firstFrame||job.seed)updateButtons();
     if(job.seed&&resumeAfterSeed){resumeAfterSeed=false;if(mode==='file-video')localInput.element.play().catch(()=>status('再生ボタンを押して動画を再開してください。'));}
   };
   worker.onerror = event => {
@@ -112,7 +145,7 @@ function drawPreview() {
   ctx.restore();
 }
 // Keep the completed frame separate from the next in-flight capture.
-const frameCanvas = document.createElement('canvas'), frameCtx = frameCanvas.getContext('2d');
+let frameCanvas = document.createElement('canvas');
 function drawDemo(time) {
   drawDemoScene(captureCtx,capture.width,capture.height,time,$('demoScene').value);
 }
@@ -121,12 +154,14 @@ function tick(now) {
   animation = requestAnimationFrame(tick);
   const elapsed=lastTick?Math.min(100,now-lastTick):0;lastTick=now;
   if(!selecting&&mode==='demo')demoTime+=elapsed;
-  updateVideoControls();
-  if (pending || selecting || now-lastRequest < 1000/30 || document.hidden) return;
+  if(now-lastVideoUI>=100){lastVideoUI=now;updateVideoControls();}
+  if (pending || selecting || filePickerOpen || document.hidden) return;
   if (mode === 'camera' && video.readyState < 2) return;
   const media=localInput?.element;
   if(mode==='file-video'&&(media.readyState<2||media.seeking))return;
-  if(!seedNext&&!dirty&&(mode==='image'||(mode==='file-video'&&media.currentTime===lastMediaTime)))return;
+  if(!seedNext&&!dirty&&(mode==='image'||(mode==='file-video'&&!frameMedia?.requestVideoFrameCallback&&media.currentTime===lastMediaTime)))return;
+  if(!seedNext&&!dirty&&frameMedia?.requestVideoFrameCallback&&sourceFrame===lastSourceFrame)return;
+  if(!pacer.ready(now,Number($('targetFps').value)))return;
   const originalWidth = seedNext?frame.originalWidth:mode === 'camera' ? video.videoWidth : mode==='image'?media.naturalWidth:mode==='file-video'?media.videoWidth:Number($('inputResolution').value);
   const originalHeight = seedNext?frame.originalHeight:mode === 'camera' ? video.videoHeight : mode==='image'?media.naturalHeight:mode==='file-video'?media.videoHeight:Math.round(originalWidth*9/16);
   if (!originalWidth || !originalHeight) return;
@@ -134,7 +169,6 @@ function tick(now) {
   // Rotating an iPhone can change the camera dimensions without restarting it.
   if(frame?.generation===generation&&(frame.sourceWidth!==sourceWidth||frame.sourceHeight!==sourceHeight)){selection=null;epoch++;}
   try {
-  lastRequest = now;
   if (capture.width !== sourceWidth || capture.height !== sourceHeight) { capture.width=sourceWidth; capture.height=sourceHeight; }
   captureCtx.clearRect(0,0,sourceWidth,sourceHeight);
   if(seedNext)captureCtx.drawImage(frameCanvas,0,0);
@@ -150,18 +184,18 @@ function tick(now) {
   analysisCtx.drawImage(capture,0,0,width,height);
   const pixels = analysisCtx.getImageData(0,0,width,height);
   const timestamp=mode==='file-video'?media.currentTime*1000:mode==='demo'?demoTime:mode==='image'?0:now;
-  pending = { id: ++sequence, generation, epoch, technique, timestamp, mediaTime:mode==='file-video'?media.currentTime:null, seed:seedNext,selection, width, height, sourceWidth, sourceHeight, originalWidth, originalHeight, options: options(), source: mode, capturedAt: new Date().toISOString() };
+  pending = { id: ++sequence, generation, epoch, technique, timestamp, mediaTime:mode==='file-video'?media.currentTime:null, seed:seedNext,selection, width, height, sourceWidth, sourceHeight, originalWidth, originalHeight, options: options(), source: mode, inputName:localInput?.name||null, capturedAt: new Date().toISOString() };
   seedNext=false;dirty=false;if(mode==='file-video')lastMediaTime=media.currentTime;
+  lastSourceFrame=sourceFrame;
   // Only this capture can be in flight; preserve it until the worker finishes.
   worker.postMessage({ ...pending, buffer: pixels.data.buffer }, [pixels.data.buffer]);
   }catch{stop(true);status('映像を解析できませんでした。別の画像・動画、または小さい解析サイズでお試しください。',true);}
 }
-// Copy the submitted image on completion, before rendering; a new job cannot
-// start between these synchronous statements.
+// Publish the submitted image with its own detection result.
 function commitFrame() {
-  if (frameCanvas.width !== capture.width || frameCanvas.height !== capture.height) { frameCanvas.width=capture.width;frameCanvas.height=capture.height; }
-  frameCtx.clearRect(0,0,frameCanvas.width,frameCanvas.height);
-  frameCtx.drawImage(capture,0,0);
+  // Swap buffers instead of copying a full-resolution capture for every result.
+  [frameCanvas,capture]=[capture,frameCanvas];
+  captureCtx=capture.getContext('2d');
   drawPreview();
 }
 
@@ -182,11 +216,11 @@ async function startCamera() {
   mode='opening'; const token=generation; updateButtons(); status('カメラの許可を待っています…');
   try {
     const requestedWidth=Number($('inputResolution').value);
-    const acquired = await navigator.mediaDevices.getUserMedia(cameraConstraints(deviceId,$('facingMode').value,requestedWidth));
+    const acquired = await navigator.mediaDevices.getUserMedia(cameraConstraints(deviceId,$('facingMode').value,requestedWidth,Number($('targetFps').value)));
     if (token !== generation) { acquired.getTracks().forEach(track=>track.stop()); return; }
     stream=acquired;video.srcObject=stream;await video.play();
     if (token !== generation) return;
-    ensureWorker();mode='camera';
+    ensureWorker();mode='camera';watchFrames(video);
     const track=stream.getVideoTracks()[0];
     const facing=track.getSettings().facingMode||$('facingMode').value;
     if(facing)$('mirror').checked=facing==='user';
@@ -241,6 +275,7 @@ async function loadSourceFile(file) {
     if(input.type==='file-video')await resolveDuration(input.element);
     if(token!==generation)return;
     mode=input.type;$('mirror').checked=false;dirty=true;ensureWorker();
+    if(mode==='file-video')watchFrames(input.element);
     $('sourceLabel').textContent=file.name;
     if(mode==='file-video'){
       const media=input.element;media.loop=$('videoLoop').checked;
@@ -302,7 +337,13 @@ window.addEventListener('keydown',event=>{if(event.key==='Escape')cancelSelectio
 async function loadOverlay(file) {
   if(!file)return;
   const id=++overlayLoadId,url=URL.createObjectURL(mediaBlob(file)),image=new Image();
-  try {image.src=url;await image.decode();if(id!==overlayLoadId)return;overlayImage=image;$('overlayName').textContent=file.name;drawPreview();}
+  try {image.src=url;await image.decode();if(id!==overlayLoadId)return;
+    const size=previewSize(image.naturalWidth,image.naturalHeight);
+    if(size.width!==image.naturalWidth||size.height!==image.naturalHeight){
+      const reduced=document.createElement('canvas');reduced.width=size.width;reduced.height=size.height;
+      reduced.getContext('2d').drawImage(image,0,0,size.width,size.height);overlayImage=reduced;
+    }else overlayImage=image;
+    $('overlayName').textContent=file.name;drawPreview();}
   catch{if(id===overlayLoadId)status(mediaError(file),true);}
   finally{URL.revokeObjectURL(url);}
 }
@@ -334,8 +375,9 @@ $('sharePrepared').addEventListener('click',async()=>{
 });
 $('downloadPrepared').addEventListener('click',()=>{if(preparedFile)download(preparedFile,preparedFile.name);});
 $('closeShare').addEventListener('click',()=>{$('sharePanel').hidden=true;preparedFile=null;});
-$('sourceFile').addEventListener('change',event=>{loadSourceFile(event.target.files[0]);event.target.value='';});
-$('overlayFile').addEventListener('change',event=>{loadOverlay(event.target.files[0]);event.target.value='';});
+$('sourceFile').addEventListener('change',event=>{closeFilePicker(false);loadSourceFile(event.target.files[0]);event.target.value='';});
+$('originalFile').addEventListener('change',event=>{closeFilePicker(false);loadSourceFile(event.target.files[0]);event.target.value='';});
+$('overlayFile').addEventListener('change',event=>{closeFilePicker();loadOverlay(event.target.files[0]);event.target.value='';});
 $('selectRegion').addEventListener('click',beginSelection);
 $('clearRegion').addEventListener('click',()=>{resetAnalysis();$('objectStatus').textContent='選択を解除しました。';});
 for(const id of ['overlayOpacity','overlayScale'])$(id).addEventListener('input',()=>{$(`${id}Value`).textContent=$(id).value+'%';drawPreview();});
@@ -354,6 +396,7 @@ $('resetTracking').addEventListener('click',resetAnalysis);
 $('demoScene').addEventListener('change',resetAnalysis);
 $('processingWidth').addEventListener('change',resetAnalysis);
 $('inputResolution').addEventListener('change',()=>{resetAnalysis();if(mode==='camera'||mode==='opening')startCamera();});
+$('targetFps').addEventListener('change',()=>{pacer.reset();if(mode==='camera'||mode==='opening')startCamera();});
 $('highDetail').addEventListener('click',()=>{
   $('inputResolution').value='1920';$('processingWidth').value='1920';$('maxPoints').value='1500';$('maxPointsValue').textContent='1500';
   resetAnalysis();if(mode==='camera'||mode==='opening')startCamera();
