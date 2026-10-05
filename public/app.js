@@ -1,5 +1,5 @@
 import { techniques, renderOverlay, demoStats, drawDemoScene } from './demo-view.js';
-import { openLocalMedia, resolveDuration } from './local-media.js';
+import { openLocalMedia, resolveDuration, mediaBlob, mediaError } from './local-media.js';
 import { previewPoint } from './object-tracker.js';
 import { appleMobile, previewSize, cameraConstraints } from './media-platform.js';
 import { startOfflineSupport } from './pwa.js';
@@ -301,9 +301,9 @@ preview.addEventListener('pointercancel',cancelSelection);
 window.addEventListener('keydown',event=>{if(event.key==='Escape')cancelSelection();});
 async function loadOverlay(file) {
   if(!file)return;
-  const id=++overlayLoadId,url=URL.createObjectURL(file),image=new Image();
+  const id=++overlayLoadId,url=URL.createObjectURL(mediaBlob(file)),image=new Image();
   try {image.src=url;await image.decode();if(id!==overlayLoadId)return;overlayImage=image;$('overlayName').textContent=file.name;drawPreview();}
-  catch{if(id===overlayLoadId)status('重ねる画像を読み込めませんでした。PNGやJPEGなどの画像を選んでください。',true);}
+  catch{if(id===overlayLoadId)status(mediaError(file),true);}
   finally{URL.revokeObjectURL(url);}
 }
 function download(blob,filename) {

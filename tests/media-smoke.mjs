@@ -92,5 +92,24 @@ export async function runMediaSmoke({evaluate,send,click,waitFor,until,delay,art
   await click('playPause');
   await writeFile(join(artifacts,'overlay-recovered.png'),Buffer.from((await send('Page.captureScreenshot',{format:'png'})).data,'base64'));
   console.log('PASS: video with 140px jumps, temporary occlusion, prediction, and automatic reacquisition');
+  const mp4=await evaluate(`(async()=>{
+    const mime=['video/mp4;codecs=avc1.42001E','video/mp4'].find(t=>MediaRecorder.isTypeSupported(t));
+    if(!mime)return null;
+    const c=document.createElement('canvas');c.width=320;c.height=240;const x=c.getContext('2d');
+    const draw=()=>{for(let y=0;y<240;y+=20)for(let u=0;u<320;u+=20){x.fillStyle=(u/20+y/20)%2?'#ffffff':'#17323b';x.fillRect(u,y,20,20);}};
+    draw();const stream=c.captureStream(10),chunks=[],recorder=new MediaRecorder(stream,{mimeType:mime});
+    recorder.ondataavailable=e=>chunks.push(e.data);const done=new Promise(r=>recorder.onstop=r);
+    recorder.start();const timer=setInterval(draw,100);await new Promise(r=>setTimeout(r,1200));
+    clearInterval(timer);recorder.stop();await done;stream.getTracks().forEach(t=>t.stop());
+    const bytes=new Uint8Array(await new Blob(chunks).arrayBuffer());let raw='';for(const b of bytes)raw+=String.fromCharCode(b);return btoa(raw);
+  })()`);
+  if(mp4){
+    const path=join(artifacts,'iphone-compatible.mp4');await writeFile(path,Buffer.from(mp4,'base64'));
+    await click('tech-points');await upload('sourceFile',path);
+    await waitFor("document.getElementById('sourceLabel').textContent==='iphone-compatible.mp4' && document.getElementById('preview').dataset.source==='file-video' && document.getElementById('fileVideo').paused",'H.264 MP4 paused frame');
+    assert(Number(await evaluate("document.getElementById('pointCount').textContent"))>0);
+    await click('playPause');await waitFor("document.getElementById('fileVideo').currentTime>0.3",'H.264 MP4 playback');
+    console.log('PASS: real H.264 MP4 file decode, paused first frame, feature extraction and playback');
+  }else console.log('SKIP: H.264 MP4 recording is unavailable in this browser');
   await click('stop');await click('demo');
 }

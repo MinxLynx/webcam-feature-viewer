@@ -56,10 +56,10 @@
           <button id="demo" class="wide">デモ映像を再生</button>
           <label for="demoScene">デモ映像のパターン</label><select id="demoScene"><option value="objects">回転する図形 / 追跡向け</option><option value="translation">画面全体の平行移動 / フロー向け</option><option value="detail">微細な模様 / 高精細・密度向け</option></select>
           <p class="hint">初回はブラウザーでカメラの使用を許可してください。</p>
-          <div class="file-section"><label for="sourceFile">動画・画像ファイルを入力</label><input id="sourceFile" type="file" accept="image/*,video/*"><p class="hint">PNG / JPEG / WebP、MP4 / WebMなど。ブラウザー対応形式を端末内で読み込みます。動画は一時停止状態で開きます。</p></div>
+          <div class="file-section"><label for="sourceFile">動画・画像ファイルを入力</label><input id="sourceFile" type="file" accept="image/*,video/*,.heic,.heif,.jpg,.jpeg,.png,.mov,.mp4,.m4v,image/heic,image/heif,video/quicktime"><p class="hint">iPhoneの写真（HEIC / HEIF・JPEG・PNG）と動画（MOV / MP4・H.264 / HEVC）を端末内で読み込みます。HEICはiOS 17以降のSafariに対応。動画は一時停止状態で開きます。WebP / WebMなどもブラウザー対応形式を読み込めます。</p></div>
         </section>
         <section id="objectControls" class="control-card" hidden><div class="card-title"><span>AR</span><h2>物体に画像を重ねる</h2></div>
-          <label for="overlayFile">重ねる画像</label><input id="overlayFile" type="file" accept="image/*">
+          <label for="overlayFile">重ねる画像</label><input id="overlayFile" type="file" accept="image/*,.heic,.heif,.jpg,.jpeg,.png,image/heic,image/heif">
           <p id="overlayName" class="hint">サンプル画像を使用中（透過PNGにも対応）</p>
           <div class="button-pair exports"><button id="selectRegion" class="primary" disabled>範囲を選択</button><button id="clearRegion">選択を解除</button></div>
           <p class="hint">「範囲を選択」で映像を固定し、プレビュー上で物体をドラッグして囲みます。Escでキャンセル。特徴の少ない背景はなるべく除いてください。</p>
@@ -89,7 +89,7 @@
         </section>
       </aside>
     </main>
-    <footer><span>映像の処理はこの端末内で完結します。外部送信・自動録画は行いません。</span><span>FEATURE LENS / 1.5</span></footer>
+    <footer><span>映像の処理はこの端末内で完結します。外部送信・自動録画は行いません。</span><span>FEATURE LENS / 1.6</span></footer>
   </div>
   <video id="video" class="media-source" muted playsinline webkit-playsinline aria-hidden="true" tabindex="-1"></video>
   <div id="mediaHost" class="media-source" aria-hidden="true"></div>
