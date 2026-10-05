@@ -55,7 +55,7 @@ export function openLocalMedia(file,host) {
     };
     const check=()=>{
       if(type==='file-video' && element.readyState>=1 && element.readyState<2 && !primed){
-        primed=true;const playing=element.play();playing?.then(()=>{if(settled||disposed)element.pause();else done();}).catch(()=>{});
+        primed=true;const playing=element.play();playing?.then(()=>{if(disposed)element.pause();else if(!settled)done();}).catch(()=>{});
       }
       done();
     };

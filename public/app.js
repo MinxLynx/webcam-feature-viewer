@@ -68,6 +68,9 @@ function updateButtons() {
   $('quickSelect').hidden=technique!=='object';
   $('quickSelect').textContent=$('selectRegion').textContent;
   $('selectionHelp').hidden=!selecting;
+  // Selection and pause transitions must update button availability immediately,
+  // independently of the less frequent progress-slider refresh.
+  updateVideoControls();
 }
 function stop(silent = false) {
   generation++;
@@ -302,6 +305,7 @@ function beginSelection() {
   if(selecting){cancelSelection();return;}
   if(!frame||!active()||frame.source!==mode||frame.generation!==generation)return;
   epoch++;selection=null;seedNext=false;selecting=true;drag=null;frame.object=null;
+  preview.dataset.objectStatus='unselected';
   if(mode==='demo')demoTime=frame.timestamp;
   resumeAfterSeed=mode==='file-video'&&!localInput.element.paused;
   if(mode==='file-video')localInput.element.pause();

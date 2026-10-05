@@ -67,6 +67,16 @@ test('unknown duration does not trigger an expensive seek to the end of a movie'
     await resolveDuration(media);
   }
 });
+test('a late initialization promise does not pause playback started by the user',async t=>{
+  const {video,ready}=environment(t);
+  let finish;
+  video.play=()=>{video.paused=false;return new Promise(resolve=>{finish=resolve;});};
+  video.metadata();video.readyState=2;video.dispatchEvent(new Event('loadeddata'));
+  await ready;assert.equal(video.paused,true);
+  video.paused=false; // The user presses Play after the first frame is ready.
+  finish();await Promise.resolve();await Promise.resolve();
+  assert.equal(video.paused,false);
+});
 
 test('a video error is reported and replacement cancels a pending load',async t=>{
   const {video,input,ready}=environment(t);

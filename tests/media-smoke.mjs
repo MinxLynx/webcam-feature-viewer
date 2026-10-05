@@ -84,6 +84,7 @@ export async function runMediaSmoke({evaluate,send,click,waitFor,until,delay,art
   if(await evaluate("document.getElementById('videoLoop').checked"))await click('videoLoop');
   await selectRegion(80/640,100/360,224/640,208/360);
   await waitFor("document.getElementById('preview').dataset.objectStatus==='tracking'",'rapid video anchor');
+  assert.equal(await evaluate("document.getElementById('playPause').disabled"),false,'Play is available immediately after selection');
   await click('playPause');
   await waitFor("document.getElementById('fileVideo').currentTime>1.35 && document.getElementById('fileVideo').currentTime<2.1 && document.getElementById('preview').dataset.objectStatus==='tracking'",'large jump recovery in video');
   await waitFor("document.getElementById('preview').dataset.objectStatus==='coasting'",'visible prediction during short occlusion');
